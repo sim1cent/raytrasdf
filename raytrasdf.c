@@ -6,10 +6,12 @@
 #include <pthread.h>
 #include "raytrasdf.h"
 
-#define WIDTH 1000
-#define HEIGHT 700
-#define RECURSION_DEPTH 3
-#define SPP 2
+#define WIDTH (1000)
+#define HEIGHT (700)
+#define RECURSION_DEPTH (3)
+#define SPP (2)
+#define MESHCULLING
+//#define OUTPUT360
 
 #define SDLPREVIEW
 
@@ -28,7 +30,7 @@ static Obj scene[]={
     {{2,0,0},{0,0,300},-1,0,PLANE,{.plane={{-1,0,0},1,{0,0,50}}}},
     {{-1,-1,2.5},{0,100,100},-1,0,BOX,{.aabb_v1={1,-0.9,5}}},
     {{-1,0,-2},{255,0,255},500,0.2,SPHERE,{.sphere_radius=0.7}},
-    {{0,-0.9,3},{300,300,300},1000,0.2,MESH,{.mesh={"teapot.stl",0,.25,.5,.1,1,3}}},
+    {{0,-0.9,3},{300,300,300},1000,0.5,MESH,{.mesh={"teapot.stl",0,.25,.5,.1,1,3}}},
 };
 
 static V3 camera_pos = {-0.5,0,0};
@@ -185,10 +187,12 @@ static Intersection ray_scene(V3 O, V3 D, enum TYPE type, Obj *buf, uint s){
                 success=ray_aabb(O,D,buf[i],&new_intersection.t,(type!=SHADOW?&new_intersection.n:NULL));
                 break;
             case MESH_TRIANGLE:
-                if(v_dot(buf[i].obj.triangle.normal,D)<0)
-                    success=ray_triangle(O,D,buf[i],&new_intersection.t,(type!=SHADOW?&new_intersection.n:NULL));
-                else
+#ifdef MESHCULLING
+                if(v_dot(buf[i].obj.triangle.normal,D)>=0)
                     success=false;
+                else
+#endif
+                    success=ray_triangle(O,D,buf[i],&new_intersection.t,(type!=SHADOW?&new_intersection.n:NULL));
                 break;
             case MESH:
                 new_intersection=intersection;
@@ -218,7 +222,7 @@ static Intersection ray_scene(V3 O, V3 D, enum TYPE type, Obj *buf, uint s){
 static void shade(float *diffuse_intensity, float *specular_intensity, Intersection intersection, Light light, V3 d){
     if(light.type==POINT){
         V3 l=v_sub(light.pos,intersection.p);
-        if(ray_scene(intersection.p,l,SHADOW,scene,arr_size(scene)).closest_obj==NULL){
+        if(v_dot(l,intersection.n)>0&&ray_scene(intersection.p,l,SHADOW,scene,arr_size(scene)).closest_obj==NULL){
             *diffuse_intensity+=v_dot(intersection.n,l)/(v_len(l)*v_dot(l,l));
             V3 s=v_sub(v_mul(intersection.n,2*v_dot(intersection.n,l)),l);
             if(intersection.closest_obj->specular>0&&v_dot(d,s)>0)
@@ -253,7 +257,7 @@ static V3 trace_ray(V3 O, V3 D, uint r){
         diffuse_color=v_add(diffuse_color,v_mul2(v_mul(c,diffuse_intensity*(1-intersection.closest_obj->reflection)),light_sources[i].intensity));
         specular_color=v_add(specular_color,v_mul2(v_mul((V3){255,255,255},specular_intensity),light_sources[i].intensity));
     }
-    if(intersection.closest_obj->reflection>0&&v_dot(intersection.n,d)>0&&r-->0)
+    if(intersection.closest_obj->reflection>0&&r-->0)
         reflection_color=v_mul(trace_ray(intersection.p,v_sub(v_mul(intersection.n,2*v_dot(intersection.n,d)),d),r),
                                 intersection.closest_obj->reflection);
     return v_add(v_add(diffuse_color,reflection_color),specular_color);
@@ -266,17 +270,33 @@ static inline void out_pic(char *fn){
     fclose(fp);
 }
 
+#ifdef OUTPUT360
+static void render_worker(uint begin, uint end, V3 *matrix){
+    V3 m[3];
+    for(;begin<end;++begin){
+        V3 c={0,0,0};
+        int a=begin%WIDTH;
+        int b=begin/WIDTH+HEIGHT/2;
+        for(uint i=0;i<SPP*SPP;++i){
+            gen_matrix(((float)SPP*a+i%SPP)/(2*HEIGHT*SPP),(SPP*b+(float)i/SPP)/(2*HEIGHT*SPP),0,1,m);
+            c=v_add(c,trace_ray(camera_pos,v_transform(v_transform((V3){0,0,1},m),matrix),RECURSION_DEPTH));
+        }
+        pic[begin]=saturate(v_mul(c,1.0f/(SPP*SPP)));
+    }
+}
+#else
 static void render_worker(uint begin, uint end, V3 *matrix){
     for(;begin<end;++begin){
         V3 c={0,0,0};
-        int x=((begin)%WIDTH)-WIDTH/2;
-        int y=((begin)/WIDTH)-HEIGHT/2;
+        int x=(begin%WIDTH)-WIDTH/2;
+        int y=(begin/WIDTH)-HEIGHT/2;
         for(uint i=0;i<SPP*SPP;++i)
             c=v_add(c,trace_ray(camera_pos,v_transform(
                 (V3){((float)SPP*x+i%SPP)/(HEIGHT*SPP),-(SPP*y+(float)i/SPP)/(HEIGHT*SPP),1},matrix),RECURSION_DEPTH));
         pic[begin]=saturate(v_mul(c,1.0f/(SPP*SPP)));
     }
 }
+#endif
 
 int main(int argc, char **argv){
     for(uint i=0;i<arr_size(scene);++i)

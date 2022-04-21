@@ -3,8 +3,8 @@
 #include <stdio.h>
 #include "raytrasdf.h"
 
-#define THREADS_N 4
-#define TASKS_N 50
+#define THREADS_N (4)
+#define TASKS_N (50)
 #define SHOW_PROGRESS
 
 static uint count;

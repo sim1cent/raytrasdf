@@ -3,13 +3,13 @@
 #include <assert.h>
 #include "raytrasdf.h"
 
-#define vert(n) (p_triangles_ptr_buf[(n)/3]->obj.triangle.vertices[(n)%3])
-static inline void vertex_normals(Obj **p_triangles_ptr_buf, uint triangle_n, float smooth){
+#define vert(n) (triangles_buf[(n)/3].obj.triangle.vertices[(n)%3])
+static inline void vertex_normals(Obj *triangles_buf, uint triangle_n, float smooth){
     uint n=triangle_n*3;
     uint *s=malloc(sizeof(uint)*n);
     assert(s!=NULL);
     for(uint i=0;i<n;++i){
-        vert(i).normal=p_triangles_ptr_buf[i/3]->obj.triangle.normal;
+        vert(i).normal=triangles_buf[i/3].obj.triangle.normal;
         s[i]=0;
     }
     if(smooth>0){
@@ -36,7 +36,7 @@ static inline void vertex_normals(Obj **p_triangles_ptr_buf, uint triangle_n, fl
         for(uint i=0;i<n;++i){
             V3 v={0,0,0};
             for(uint j=0;j<s[i];++j)
-                if(((v_dot(buf0[i][j],vert(i).normal)+1)/2)>(1-smooth))
+                if(smooth>=1.0f||((v_dot(buf0[i][j],vert(i).normal)+1)/2)>(1-smooth))
                     v=v_add(v,buf0[i][j]);
             vert(i).normal=v_norm(v);
         }
@@ -46,7 +46,7 @@ static inline void vertex_normals(Obj **p_triangles_ptr_buf, uint triangle_n, fl
     free(s);
 }
 
-static Octree_node *gen_octree_node(Obj bounding, Obj **triangles_ptr_buf, Obj **triangles_buf, uint triangle_n, uint od){
+static Octree_node *gen_octree_node(Obj bounding, Obj **triangles_buf, uint *triangle_n, uint od){
     Octree_node *new_node=NULL;
     new_node=malloc(sizeof(Octree_node));
     assert(new_node!=NULL);
@@ -68,7 +68,7 @@ static Octree_node *gen_octree_node(Obj bounding, Obj **triangles_ptr_buf, Obj *
                     v0.v_arr[j]+=t.v_arr[j];
             new_aabb.pos=v0.v;
             new_aabb.obj.aabb_v1=v_add(v0.v,t.v);
-            new_node->c_nodes[i]=gen_octree_node(new_aabb,triangles_ptr_buf,triangles_buf,triangle_n,od);
+            new_node->c_nodes[i]=gen_octree_node(new_aabb,triangles_buf,triangle_n,od);
             if(new_node->c_nodes[i]!=NULL) empty=false;
         }
     }
@@ -76,20 +76,19 @@ static Octree_node *gen_octree_node(Obj bounding, Obj **triangles_ptr_buf, Obj *
         for(uint i=0;i<8;++i) new_node->c_nodes[i]=NULL;
     }
     new_node->triangles=*triangles_buf;
-    for(uint i=0;i<triangle_n;++i){
-        if(triangles_ptr_buf[i]!=NULL){
-            for(uint j=0;j<=3;++j){
-                if(j==3){
-                    *((*triangles_buf)++)=*triangles_ptr_buf[i];
-                    free(triangles_ptr_buf[i]);
-                    triangles_ptr_buf[i]=NULL;
-                    ++new_node->triangle_n;
-                }
-                else if(!within_box(bounding,triangles_ptr_buf[i]->obj.triangle.vertices[j].pos))
-                    break;
+    for(uint i=0;i<*triangle_n;++i){
+        for(uint j=0;j<=3;++j){
+            if(j==3){
+                Obj temp=new_node->triangles[i];
+                new_node->triangles[i]=**triangles_buf;
+                *((*triangles_buf)++)=temp;
+                ++new_node->triangle_n;
             }
+            else if(!within_box(bounding,new_node->triangles[i].obj.triangle.vertices[j].pos))
+                break;
         }
     }
+    *triangle_n-=new_node->triangle_n;
     if(empty&&new_node->triangle_n==0){
         free(new_node);
         new_node=NULL;
@@ -118,8 +117,9 @@ void load_stl(Obj *obj){
     uint32_t triangle_n;
     assert(fread(&triangle_n,4,1,fp));
     if(triangle_n>0){
-        Obj **triangles_ptr_buf=malloc(sizeof(Obj*)*triangle_n);
-        assert(triangles_ptr_buf!=NULL);
+        Obj *triangles_buf=malloc(triangle_n*sizeof(Obj));
+        assert(triangles_buf!=NULL);
+        obj->obj.mesh.triangles_buf=triangles_buf;
         V3 v_pos;
         V3 matrix[3];
         gen_matrix(obj->obj.mesh.yaw,obj->obj.mesh.pitch,obj->obj.mesh.roll,obj->obj.mesh.scale,matrix);
@@ -128,40 +128,34 @@ void load_stl(Obj *obj){
             float v_arr[3];
         }v0,v1,temp;
         for(uint i=0;i<triangle_n;++i){
-            triangles_ptr_buf[i]=malloc(sizeof(Obj));
-            assert(triangles_ptr_buf[i]!=NULL);
-            triangles_ptr_buf[i]->type=MESH_TRIANGLE;
-            assert(fread(&triangles_ptr_buf[i]->obj.triangle.normal,sizeof(V3),1,fp));
-            triangles_ptr_buf[i]->obj.triangle.normal=v_norm(v_transform(triangles_ptr_buf[i]->obj.triangle.normal,matrix));
+            triangles_buf[i].type=MESH_TRIANGLE;
+            assert(fread(&triangles_buf[i].obj.triangle.normal,sizeof(V3),1,fp));
+            triangles_buf[i].obj.triangle.normal=v_norm(v_transform(triangles_buf[i].obj.triangle.normal,matrix));
             for(uint j=0;j<3;++j){
                 assert(fread(&v_pos,sizeof(V3),1,fp));
-                triangles_ptr_buf[i]->obj.triangle.vertices[j].pos=v_add(v_transform(v_pos,matrix),obj->pos);
+                triangles_buf[i].obj.triangle.vertices[j].pos=v_add(v_transform(v_pos,matrix),obj->pos);
                 if(j==0&&i==0){
-                    v0.v=triangles_ptr_buf[0]->obj.triangle.vertices[0].pos;
-                    v1.v=triangles_ptr_buf[0]->obj.triangle.vertices[0].pos;
+                    v0.v=v_sub(triangles_buf[0].obj.triangle.vertices[0].pos,(V3){.05,.05,.05});
+                    v1.v=v_add(triangles_buf[0].obj.triangle.vertices[0].pos,(V3){.05,.05,.05});
                 }
-                temp.v=triangles_ptr_buf[i]->obj.triangle.vertices[j].pos;
+                temp.v=triangles_buf[i].obj.triangle.vertices[j].pos;
                 for(uint k=0;k<3;++k){
                     v0.v_arr[k]=min(v0.v_arr[k],temp.v_arr[k]);
                     v1.v_arr[k]=max(v1.v_arr[k],temp.v_arr[k]);
                 }
             }
-            triangles_ptr_buf[i]->obj.triangle.area=v_len(v_cross(v_sub(triangles_ptr_buf[i]->obj.triangle.vertices[0].pos,
-                                                                     triangles_ptr_buf[i]->obj.triangle.vertices[1].pos),
-                                                                     v_sub(triangles_ptr_buf[i]->obj.triangle.vertices[0].pos,
-                                                                     triangles_ptr_buf[i]->obj.triangle.vertices[2].pos)));
+            triangles_buf[i].obj.triangle.area=v_len(v_cross(v_sub(triangles_buf[i].obj.triangle.vertices[0].pos,
+                                                                     triangles_buf[i].obj.triangle.vertices[1].pos),
+                                                                     v_sub(triangles_buf[i].obj.triangle.vertices[0].pos,
+                                                                     triangles_buf[i].obj.triangle.vertices[2].pos)));
             fseek(fp,2,SEEK_CUR);
         }
         fclose(fp);
-        vertex_normals(triangles_ptr_buf,triangle_n,obj->obj.mesh.smooth);
+        vertex_normals(triangles_buf,triangle_n,obj->obj.mesh.smooth);
         Obj new_aabb;
         new_aabb.pos=v0.v;
         new_aabb.obj.aabb_v1=v1.v;
-        Obj *triangles_buf=malloc(triangle_n*sizeof(Obj));
-        assert(triangles_buf!=NULL);
-        obj->obj.mesh.triangles_buf=triangles_buf;
-        obj->obj.mesh.root=gen_octree_node(new_aabb,triangles_ptr_buf,&triangles_buf,triangle_n,obj->obj.mesh.octree_depth);
-        free(triangles_ptr_buf);
+        obj->obj.mesh.root=gen_octree_node(new_aabb,&triangles_buf,&triangle_n,obj->obj.mesh.octree_depth);
     }
     else{
         fclose(fp);

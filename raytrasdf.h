@@ -97,7 +97,7 @@ static inline V3 v_sub(V3 v0, V3 v1){
 static inline V3 v_norm(V3 v){
     float len=v_len(v);
     if(len!=0)
-        return v_mul(v,1/len);
+        return v_mul(v,1.0f/len);
     return (V3){0,0,0};
 }
 

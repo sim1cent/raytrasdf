@@ -4,7 +4,7 @@ LDFLAGS = -lm -lpthread -lSDL2
 OBJS = raytrasdf.o loadstl.o tpool.o sdlout.o
 
 $(PROG) : $(OBJS)
-	$(CC) -o $(PROG) $(OBJS) $(LDFLAGS)
+	$(CC) -o $(PROG) $(OBJS) $(CFLAGS) $(LDFLAGS)
 
 raytrasdf.o: raytrasdf.c raytrasdf.h
 	$(CC) $(CFLAGS) -c raytrasdf.c

@@ -33,6 +33,7 @@ void *draw_stuff(struct draw_args *args){
         while(1){
             while(SDL_PollEvent(&event))
                 if(event.type==SDL_QUIT){
+                    SDL_FreeSurface(sur);
                     SDL_DestroyWindow(win);
                     SDL_Quit();
                     return NULL;
